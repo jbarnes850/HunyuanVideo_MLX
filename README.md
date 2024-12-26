@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-Tencent%20Hunyuan-blue.svg)](LICENSE.txt)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3116/)
-[![MLX](https://img.shields.io/badge/MLX-0.0.10+-blue.svg)](https://github.com/ml-explore/mlx)
+[![MLX](https://img.shields.io/badge/MLX-0.21.1+-blue.svg)](https://github.com/ml-explore/mlx)
 [![macOS](https://img.shields.io/badge/macOS-12.3+-blue.svg)](https://support.apple.com/macos)
 
 A streamlined, Mac-native port of Tencent's text-to-video AI model, optimized specifically for Apple Silicon using MLX. Generate high-quality videos from text descriptions with native performance on your M1/M2/M3 Mac.
