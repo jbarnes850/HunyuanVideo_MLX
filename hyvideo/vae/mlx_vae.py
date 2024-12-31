@@ -36,7 +36,7 @@ class MLXVAE:
         import torch
         if not isinstance(x, torch.Tensor):
             # Convert MLX array to numpy array first
-            x = torch.from_numpy(x.astype(mx.float16).tolist())
+            x = torch.from_numpy(x.astype(mx.float16).numpy())
             if torch.backends.mps.is_available():
                 x = x.to("mps")
         
@@ -71,7 +71,7 @@ class MLXVAE:
         import torch
         if not isinstance(z, torch.Tensor):
             # Convert MLX array to numpy array first
-            z = torch.from_numpy(z.astype(mx.float16).tolist())
+            z = torch.from_numpy(z.astype(mx.float16).numpy())
             if torch.backends.mps.is_available():
                 z = z.to("mps")
         
