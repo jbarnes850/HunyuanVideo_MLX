@@ -631,4 +631,223 @@ class HunyuanVideoPipeline:
                     if guidance_scale > 1.0:
                         uncond_tokens = [""] if negative_prompt is None else [negative_prompt]
                         uncond_input = self.text_encoder.text2tokens(uncond_tokens)
-                        negative_prompt_embeds_
+                        negative_prompt_embeds_pt = self.text_encoder.encode(uncond_input).hidden_state
+                        prompt_embeds_pt = torch.cat([negative_prompt_embeds_pt, prompt_embeds_pt])
+                    
+                    # Convert to MLX
+                    prompt_embeds = to_mlx(prompt_embeds_pt)
+            except Exception as e:
+                print(f"Error in text encoding: {str(e)}")
+                raise e
+            finally:
+                # Clear PyTorch memory
+                if 'prompt_embeds_pt' in locals():
+                    del prompt_embeds_pt
+                if 'negative_prompt_embeds_pt' in locals():
+                    del negative_prompt_embeds_pt
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                if hasattr(torch.mps, 'empty_cache'):
+                    torch.mps.empty_cache()
+                    
+            # 2. Prepare timesteps in MLX format
+            timesteps = mx.array(list(range(num_inference_steps)), dtype=mx.float16)
+            
+            # 3. Prepare latent variables in MLX format
+            # Ensure dimensions are divisible by patch size
+            P_t, P_h, P_w = self.patch_size
+            
+            # Adjust dimensions to be divisible by patch size
+            adjusted_height = ((height // self.vae_scale_factor) // P_h) * P_h
+            adjusted_width = ((width // self.vae_scale_factor) // P_w) * P_w
+            adjusted_length = ((video_length) // P_t) * P_t
+            
+            logger.info(f"Adjusting dimensions to be divisible by patch size:")
+            logger.info(f"Height: {height // self.vae_scale_factor} -> {adjusted_height}")
+            logger.info(f"Width: {width // self.vae_scale_factor} -> {adjusted_width}")
+            logger.info(f"Length: {video_length} -> {adjusted_length}")
+            
+            shape = (
+                1,  # batch_size
+                self.transformer.config.in_channels,
+                adjusted_length,
+                adjusted_height,
+                adjusted_width,
+            )
+            
+            if latents is None:
+                # Generate random latents
+                latents = mx.random.normal(shape=shape, loc=0.0, scale=1.0, dtype=mx.float16)
+            else:
+                latents = to_mlx(latents)
+                
+            # Scale latents
+            latents = latents * timesteps[0]
+            
+            # 4. Denoising loop with MLX operations
+            for i, t in enumerate(timesteps):
+                try:
+                    # Handle classifier free guidance
+                    latent_model_input = mx.concatenate([latents, latents], axis=0) if guidance_scale > 1.0 else latents
+                    
+                    # Process in chunks to manage memory
+                    chunk_size = 4  # Process 4 frames at a time
+                    img_chunks = []
+                    
+                    for i in range(0, latent_model_input.shape[2], chunk_size):
+                        try:
+                            # Process smaller chunk
+                            chunk = latent_model_input[:, :, i:i+chunk_size]
+                            img_chunk = self.img_in(chunk)
+                            img_chunks.append(img_chunk)
+                            
+                            # Aggressive cleanup after each chunk
+                            del chunk
+                            clear_mlx_cache()
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing chunk {i}: {str(e)}")
+                            raise
+                    
+                    # Combine chunks
+                    img = mx.concatenate(img_chunks, axis=1)
+                    del img_chunks  # Free memory
+                    clear_mlx_cache()
+                    
+                    # Process text and time embeddings
+                    txt = self.txt_in(prompt_embeds)
+                    vec = self.time_in(t)
+                    vec = vec + self.vector_in(to_mlx(kwargs.get('text_states_2')))
+                    clear_mlx_cache()
+                    
+                    # Double stream blocks
+                    for block in self.double_blocks:
+                        img, txt = block(img, txt, vec, kwargs.get('freqs_cis'))
+                        
+                    # Single stream blocks
+                    x = mx.concatenate([img, txt], axis=1)
+                    txt_len = txt.shape[1]
+                    for block in self.single_blocks:
+                        x = block(x, vec, txt_len, kwargs.get('freqs_cis'))
+                        
+                    # Get image portion and apply guidance
+                    img = x[:, :img.shape[1]]
+                    if guidance_scale > 1.0:
+                        noise_pred_uncond, noise_pred_text = mx.split(img, 2, axis=0)
+                        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+                    else:
+                        noise_pred = img
+                        
+                    # Log shapes for debugging
+                    logger.info(f"Before reshape - noise_pred: {noise_pred.shape}, latents: {latents.shape}")
+                    
+                    # Get latents shape
+                    B, C, T, H, W = latents.shape
+                    
+                    # Project noise prediction to match VAE latent channels
+                    logger.info(f"Initial noise_pred shape: {noise_pred.shape}")
+                    noise_pred = noise_pred.reshape(-1, self.hidden_size)  # Flatten to 2D
+                    logger.info(f"After flatten shape: {noise_pred.shape}")
+                    noise_pred = self.proj(noise_pred)  # Project to correct channel dim
+                    logger.info(f"After projection shape: {noise_pred.shape}")
+                    
+                    # Calculate spatial dimensions
+                    total_spatial = T * H * W
+                    spatial_per_batch = noise_pred.shape[0] // B
+                    
+                    # Ensure dimensions match
+                    if spatial_per_batch != total_spatial:
+                        logger.warning(f"Spatial dimensions mismatch: got {spatial_per_batch}, expected {total_spatial}")
+                        # Interpolate noise_pred to match expected dimensions
+                        noise_pred = noise_pred.reshape(B, -1, C)  # First reshape to batch
+                        # Resize to match spatial dimensions
+                        noise_pred = mx.repeat(noise_pred, total_spatial // noise_pred.shape[1], axis=1)
+                        # Truncate any extra elements
+                        noise_pred = noise_pred[:, :total_spatial, :]
+                    else:
+                        noise_pred = noise_pred.reshape(B, total_spatial, C)
+                    
+                    logger.info(f"After spatial adjustment: {noise_pred.shape}")
+                    noise_pred = noise_pred.transpose(0, 2, 1)  # B, C, THW
+                    logger.info(f"After transpose: {noise_pred.shape}")
+                    noise_pred = noise_pred.reshape(B, C, T, H, W)  # Final reshape to match latents
+                    logger.info(f"Final shape: {noise_pred.shape}")
+                    logger.info(f"Target latents shape: {latents.shape}")
+                    
+                    # Update latents with broadcasting
+                    alpha = 1.0 / ((t + 1) ** 0.5)
+                    alpha = mx.array(alpha, dtype=latents.dtype)
+                    latents = (latents - (1 - alpha) * noise_pred) / alpha
+                    
+                    # Clear MLX cache periodically
+                    if i % 5 == 0:
+                        clear_mlx_cache()
+                        
+                except Exception as e:
+                    print(f"Error in denoising step {i}: {str(e)}")
+                    raise e
+            
+            # 5. Post-processing with MLX
+            try:
+                if output_type == "latent":
+                    videos = from_mlx(latents)
+                else:
+                    # VAE Decoding with MLX
+                    try:
+                        # Always process in smaller chunks for VAE
+                        chunk_size = 8  # Smaller chunk size for VAE
+                        chunks = []
+                        
+                        for i in range(0, latents.shape[2], chunk_size):
+                            try:
+                                # Process chunk
+                                chunk = latents[:, :, i:i+chunk_size]
+                                chunk_decoded = self.vae.decode(chunk)["sample"]
+                                chunks.append(chunk_decoded)
+                                
+                                # Aggressive cleanup
+                                del chunk
+                                clear_mlx_cache()
+                                
+                            except Exception as e:
+                                logger.error(f"Error in VAE decoding chunk {i}: {str(e)}")
+                                raise
+                        
+                        # Convert chunks to numpy arrays first
+                        numpy_chunks = [from_mlx(chunk) for chunk in chunks]
+                        del chunks
+                        clear_mlx_cache()
+                        
+                        # Combine numpy chunks
+                        videos = np.concatenate(numpy_chunks, axis=2)
+                        del numpy_chunks
+                            
+                    except Exception as e:
+                        print(f"Error in VAE decoding: {str(e)}")
+                        raise e
+                
+                # Convert to numpy array
+                videos = np.array(videos, dtype=np.float16)
+            except Exception as e:
+                print(f"Error in post-processing: {str(e)}")
+                raise e
+            
+            # Convert videos to PyTorch tensor if needed
+            if output_type == "pil":
+                videos = torch.from_numpy(videos)
+                if torch.backends.mps.is_available():
+                    videos = videos.to("mps")
+            
+            # Return with metadata
+            return HunyuanVideoPipelineOutput(
+                videos=videos,
+                seeds=[kwargs.get('seed', -1)],  # Use provided seed or -1
+                prompts=[prompt] if isinstance(prompt, str) else prompt
+            )
+            
+        except Exception as e:
+            print(f"Error in generation: {str(e)}")
+            raise e
+        finally:
+            # Final cleanup
+            clear_mlx_cache()
