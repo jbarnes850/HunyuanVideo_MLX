@@ -8,8 +8,8 @@ def to_mlx(tensor):
     if tensor is None:
         return None
     if hasattr(tensor, 'numpy'):
-        return mx.array(tensor.detach().cpu().numpy())
-    return mx.array(tensor)
+        return mx.array(tensor.detach().cpu().numpy(), dtype=mx.float16)
+    return mx.array(tensor, dtype=mx.float16)
 
 class MLXVAE:
     """MLX-optimized VAE wrapper for HunyuanVideo."""
@@ -36,7 +36,12 @@ class MLXVAE:
         import torch
         if not isinstance(x, torch.Tensor):
             # Convert MLX array to numpy array first
-            x = torch.from_numpy(x.astype(mx.float16).numpy())
+            if isinstance(x, mx.array):
+                x = torch.from_numpy(x.astype(mx.float16).numpy())
+            elif isinstance(x, list):
+                x = torch.from_numpy(np.stack([arr.astype(mx.float16).numpy() for arr in x]))
+            else:
+                x = torch.from_numpy(np.array(x, dtype=np.float16))
             if torch.backends.mps.is_available():
                 x = x.to("mps")
         
@@ -71,7 +76,12 @@ class MLXVAE:
         import torch
         if not isinstance(z, torch.Tensor):
             # Convert MLX array to numpy array first
-            z = torch.from_numpy(z.astype(mx.float16).numpy())
+            if isinstance(z, mx.array):
+                z = torch.from_numpy(z.astype(mx.float16).numpy())
+            elif isinstance(z, list):
+                z = torch.from_numpy(np.stack([arr.astype(mx.float16).numpy() for arr in z]))
+            else:
+                z = torch.from_numpy(np.array(z, dtype=np.float16))
             if torch.backends.mps.is_available():
                 z = z.to("mps")
         
