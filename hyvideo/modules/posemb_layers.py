@@ -48,7 +48,7 @@ def get_meshgrid_nd(start, *args, dim=2):
     axis_grid = []
     for i in range(dim):
         a, b, n = start[i], stop[i], num[i]
-        g = torch.linspace(a, b, n + 1, dtype=torch.float32)[:n]
+        g = torch.linspace(a, b, n + 1, dtype=torch.float16)[:n]
         axis_grid.append(g)
     grid = torch.meshgrid(*axis_grid, indexing="ij")  # dim x [W, H, D]
     grid = torch.stack(grid, dim=0)  # [dim, W, H, D]
@@ -132,7 +132,7 @@ def reshape_for_broadcast(
 
 def rotate_half(x):
     x_real, x_imag = (
-        x.float().reshape(*x.shape[:-1], -1, 2).unbind(-1)
+        x.to(dtype=torch.float16).reshape(*x.shape[:-1], -1, 2).unbind(-1)
     )  # [B, S, H, D//2]
     return torch.stack([-x_imag, x_real], dim=-1).flatten(3)
 
@@ -167,12 +167,12 @@ def apply_rotary_emb(
         cos, sin = cos.to(xq.device), sin.to(xq.device)
         # real * cos - imag * sin
         # imag * cos + real * sin
-        xq_out = (xq.float() * cos + rotate_half(xq.float()) * sin).type_as(xq)
-        xk_out = (xk.float() * cos + rotate_half(xk.float()) * sin).type_as(xk)
+        xq_out = (xq.to(dtype=torch.float16) * cos + rotate_half(xq.to(dtype=torch.float16)) * sin).type_as(xq)
+        xk_out = (xk.to(dtype=torch.float16) * cos + rotate_half(xk.to(dtype=torch.float16)) * sin).type_as(xk)
     else:
         # view_as_complex will pack [..., D/2, 2](real) to [..., D/2](complex)
         xq_ = torch.view_as_complex(
-            xq.float().reshape(*xq.shape[:-1], -1, 2)
+            xq.to(dtype=torch.float16).reshape(*xq.shape[:-1], -1, 2)
         )  # [B, S, H, D//2]
         freqs_cis = reshape_for_broadcast(freqs_cis, xq_, head_first).to(
             xq.device
@@ -181,7 +181,7 @@ def apply_rotary_emb(
         # view_as_real will expand [..., D/2](complex) to [..., D/2, 2](real)
         xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3).type_as(xq)
         xk_ = torch.view_as_complex(
-            xk.float().reshape(*xk.shape[:-1], -1, 2)
+            xk.to(dtype=torch.float16).reshape(*xk.shape[:-1], -1, 2)
         )  # [B, S, H, D//2]
         xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3).type_as(xk)
 
@@ -287,7 +287,7 @@ def get_1d_rotary_pos_embed(
         freqs_cos, freqs_sin: Precomputed frequency tensor with real and imaginary parts separately. [S, D]
     """
     if isinstance(pos, int):
-        pos = torch.arange(pos).float()
+        pos = torch.arange(pos, dtype=torch.float16)
 
     # proposed by reddit user bloc97, to rescale rotary embeddings to longer sequence length without fine-tuning
     # has some connection to NTK literature
@@ -295,7 +295,7 @@ def get_1d_rotary_pos_embed(
         theta *= theta_rescale_factor ** (dim / (dim - 2))
 
     freqs = 1.0 / (
-        theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim)
+        theta ** (torch.arange(0, dim, 2, dtype=torch.float16)[: (dim // 2)] / dim)
     )  # [D/2]
     # assert interpolation_factor == 1.0, f"interpolation_factor: {interpolation_factor}"
     freqs = torch.outer(pos * interpolation_factor, freqs)  # [S, D/2]

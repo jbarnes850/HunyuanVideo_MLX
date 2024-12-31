@@ -83,7 +83,7 @@ class FlowMatchDiscreteScheduler(SchedulerMixin, ConfigMixin):
 
         self.sigmas = sigmas
         # the value fed to model
-        self.timesteps = (sigmas[:-1] * num_train_timesteps).to(dtype=torch.float32)
+        self.timesteps = (sigmas[:-1] * num_train_timesteps).to(dtype=torch.float16)
 
         self._step_index = None
         self._begin_index = None
@@ -149,7 +149,7 @@ class FlowMatchDiscreteScheduler(SchedulerMixin, ConfigMixin):
 
         self.sigmas = sigmas
         self.timesteps = (sigmas[:-1] * self.config.num_train_timesteps).to(
-            dtype=torch.float32, device=device
+            dtype=torch.float16, device=device
         )
 
         # Reset step index
@@ -233,13 +233,13 @@ class FlowMatchDiscreteScheduler(SchedulerMixin, ConfigMixin):
         if self.step_index is None:
             self._init_step_index(timestep)
 
-        # Upcast to avoid precision issues when computing prev_sample
-        sample = sample.to(torch.float32)
+        # Use fp16 precision for computing prev_sample
+        sample = sample.to(torch.float16)
 
         dt = self.sigmas[self.step_index + 1] - self.sigmas[self.step_index]
 
         if self.config.solver == "euler":
-            prev_sample = sample + model_output.to(torch.float32) * dt
+            prev_sample = sample + model_output.to(torch.float16) * dt
         else:
             raise ValueError(
                 f"Solver {self.config.solver} not supported. Supported solvers: {self.supported_solver}"

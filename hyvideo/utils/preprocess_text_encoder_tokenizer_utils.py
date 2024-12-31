@@ -19,7 +19,7 @@ def preprocess_text_encoder_tokenizer(args):
         # Load model with CPU-only settings
         model = LlavaForConditionalGeneration.from_pretrained(
             args.input_dir,
-            torch_dtype=torch.float32,
+            torch_dtype=torch.float16,
             low_cpu_mem_usage=True,
             device_map=None  # Don't use any device mapping
         )

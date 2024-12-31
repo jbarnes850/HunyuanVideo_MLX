@@ -17,7 +17,7 @@ def test_mm_double_stream_block_attention():
         return
 
     device = torch.device("mps")
-    dtype = torch.float32
+    dtype = torch.float16
     batch_size = 1
     seq_len_img = 256  # Further reduced for memory constraints
     seq_len_txt = 64   # Further reduced for memory constraints
@@ -37,7 +37,7 @@ def test_mm_double_stream_block_attention():
         v = torch.cat((img_v, txt_v), dim=1)
 
         total_len = seq_len_img + seq_len_txt
-        cu_seqlens = torch.tensor([0, seq_len_img, total_len], device=device, dtype=torch.int32)
+        cu_seqlens = torch.tensor([0, seq_len_img, total_len], device=device, dtype=torch.int16)
         
         # Test vanilla mode
         print("Testing vanilla attention mode...")
@@ -78,7 +78,7 @@ def test_mm_single_stream_block_attention():
         return
 
     device = torch.device("mps")
-    dtype = torch.float32
+    dtype = torch.float16
     txt_len = 64       # Reduced for memory constraints
     batch_size = 1
     seq_len_img = 256  # Reduced for memory constraints
@@ -97,7 +97,7 @@ def test_mm_single_stream_block_attention():
         k = torch.cat((img_k, txt_k), dim=1)
 
         total_len = seq_len_img + seq_len_txt
-        cu_seqlens = torch.tensor([0, seq_len_img, total_len], device=device, dtype=torch.int32)
+        cu_seqlens = torch.tensor([0, seq_len_img, total_len], device=device, dtype=torch.int16)
 
         # Test vanilla mode
         print("\nTesting vanilla attention mode (single stream)...")
