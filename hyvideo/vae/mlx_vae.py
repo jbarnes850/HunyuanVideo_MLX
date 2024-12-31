@@ -4,19 +4,21 @@ import numpy as np
 from typing import Optional, Dict, Any
 
 def to_mlx(tensor):
-    """Convert PyTorch tensor to MLX array"""
+    """Convert PyTorch tensor to MLX array maintaining fp16"""
     if tensor is None:
         return None
     if hasattr(tensor, 'numpy'):
-        # Handle PyTorch tensor
-        return mx.array(tensor.detach().cpu().numpy(), dtype=mx.float16)
+        # Handle PyTorch tensor - detach and move to CPU first
+        tensor = tensor.detach().cpu()
+        # Convert directly to float16
+        return mx.array(tensor.numpy(), dtype=mx.float16)
     elif isinstance(tensor, np.ndarray):
         # Handle numpy array
         return mx.array(tensor, dtype=mx.float16)
     elif isinstance(tensor, list):
-        # Handle list of tensors/arrays
+        # Handle list
         return mx.array(np.array(tensor, dtype=np.float16), dtype=mx.float16)
-    # Handle other types by converting to numpy first
+    # Handle other types
     return mx.array(np.array(tensor, dtype=np.float16), dtype=mx.float16)
 
 class MLXVAE:
@@ -45,17 +47,23 @@ class MLXVAE:
         if not isinstance(x, torch.Tensor):
             # Convert MLX array to numpy array first
             if isinstance(x, mx.array):
-                # Use MLX's built-in numpy conversion
-                x = torch.from_numpy(np.array(x.tolist(), dtype=np.float16))
+                # Convert directly to float16
+                np_array = np.array(x.tolist(), dtype=np.float16)
+                x = torch.from_numpy(np_array).to(dtype=torch.float16)
             elif isinstance(x, list):
-                x = torch.from_numpy(np.stack([np.array(arr.tolist(), dtype=np.float16) for arr in x]))
+                np_array = np.stack([np.array(arr.tolist(), dtype=np.float16) for arr in x])
+                x = torch.from_numpy(np_array).to(dtype=torch.float16)
             else:
-                x = torch.from_numpy(np.array(x, dtype=np.float16))
-            if torch.backends.mps.is_available():
-                x = x.to("mps")
+                np_array = np.array(x, dtype=np.float16)
+                x = torch.from_numpy(np_array).to(dtype=torch.float16)
+            
+            # Force CPU for operations not supported by MPS
+            x = x.cpu()
         
-        # Encode with PyTorch VAE
+        # Encode with PyTorch VAE on CPU
         with torch.no_grad():
+            # Ensure VAE is on CPU for unsupported ops
+            self.vae = self.vae.cpu()
             z = self.vae.encode(x)
             if isinstance(z, torch.Tensor):
                 latents = z
@@ -67,6 +75,9 @@ class MLXVAE:
             if hasattr(self.vae, 'config'):
                 if hasattr(self.vae.config, 'scaling_factor'):
                     latents = latents * self.vae.config.scaling_factor
+            
+            # Convert to float16 after processing
+            latents = latents.to(dtype=torch.float16)
         
         # Convert back to MLX
         return {"sample": to_mlx(latents)}
@@ -86,27 +97,33 @@ class MLXVAE:
         if not isinstance(z, torch.Tensor):
             # Convert MLX array to numpy array first
             if isinstance(z, mx.array):
-                # Use MLX's built-in numpy conversion
-                z = torch.from_numpy(np.array(z.tolist(), dtype=np.float16))
+                # Convert directly to float16
+                np_array = np.array(z.tolist(), dtype=np.float16)
+                z = torch.from_numpy(np_array).to(dtype=torch.float16)
             elif isinstance(z, list):
-                z = torch.from_numpy(np.stack([np.array(arr.tolist(), dtype=np.float16) for arr in z]))
+                np_array = np.stack([np.array(arr.tolist(), dtype=np.float16) for arr in z])
+                z = torch.from_numpy(np_array).to(dtype=torch.float16)
             else:
-                z = torch.from_numpy(np.array(z, dtype=np.float16))
-            if torch.backends.mps.is_available():
-                z = z.to("mps")
+                np_array = np.array(z, dtype=np.float16)
+                z = torch.from_numpy(np_array).to(dtype=torch.float16)
+            
+            # Force CPU for operations not supported by MPS
+            z = z.cpu()
         
         # Scale latents
         if hasattr(self.vae, 'config'):
             if hasattr(self.vae.config, 'scaling_factor'):
                 z = z / self.vae.config.scaling_factor
         
-        # Decode with PyTorch VAE
+        # Decode with PyTorch VAE on CPU
         with torch.no_grad():
+            # Ensure VAE is on CPU for unsupported ops
+            self.vae = self.vae.cpu()
             sample = self.vae.decode(z, **kwargs)
-            if isinstance(sample, torch.Tensor):
-                sample = sample
-            else:
+            if not isinstance(sample, torch.Tensor):
                 sample = sample.sample
+            # Convert back to float16 after processing
+            sample = sample.to(dtype=torch.float16)
         
         # Convert back to MLX
         return {"sample": to_mlx(sample)}
