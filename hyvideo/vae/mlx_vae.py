@@ -8,8 +8,16 @@ def to_mlx(tensor):
     if tensor is None:
         return None
     if hasattr(tensor, 'numpy'):
+        # Handle PyTorch tensor
         return mx.array(tensor.detach().cpu().numpy(), dtype=mx.float16)
-    return mx.array(tensor, dtype=mx.float16)
+    elif isinstance(tensor, np.ndarray):
+        # Handle numpy array
+        return mx.array(tensor, dtype=mx.float16)
+    elif isinstance(tensor, list):
+        # Handle list of tensors/arrays
+        return mx.array(np.array(tensor, dtype=np.float16), dtype=mx.float16)
+    # Handle other types by converting to numpy first
+    return mx.array(np.array(tensor, dtype=np.float16), dtype=mx.float16)
 
 class MLXVAE:
     """MLX-optimized VAE wrapper for HunyuanVideo."""
@@ -37,9 +45,10 @@ class MLXVAE:
         if not isinstance(x, torch.Tensor):
             # Convert MLX array to numpy array first
             if isinstance(x, mx.array):
-                x = torch.from_numpy(x.astype(mx.float16).numpy())
+                # Use MLX's built-in numpy conversion
+                x = torch.from_numpy(np.array(x.tolist(), dtype=np.float16))
             elif isinstance(x, list):
-                x = torch.from_numpy(np.stack([arr.astype(mx.float16).numpy() for arr in x]))
+                x = torch.from_numpy(np.stack([np.array(arr.tolist(), dtype=np.float16) for arr in x]))
             else:
                 x = torch.from_numpy(np.array(x, dtype=np.float16))
             if torch.backends.mps.is_available():
@@ -77,9 +86,10 @@ class MLXVAE:
         if not isinstance(z, torch.Tensor):
             # Convert MLX array to numpy array first
             if isinstance(z, mx.array):
-                z = torch.from_numpy(z.astype(mx.float16).numpy())
+                # Use MLX's built-in numpy conversion
+                z = torch.from_numpy(np.array(z.tolist(), dtype=np.float16))
             elif isinstance(z, list):
-                z = torch.from_numpy(np.stack([arr.astype(mx.float16).numpy() for arr in z]))
+                z = torch.from_numpy(np.stack([np.array(arr.tolist(), dtype=np.float16) for arr in z]))
             else:
                 z = torch.from_numpy(np.array(z, dtype=np.float16))
             if torch.backends.mps.is_available():
